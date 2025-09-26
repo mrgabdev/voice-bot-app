@@ -21,8 +21,20 @@ import VoiceApp from './components/VoiceApp.vue'
 			<ToggleTheme />
 		</v-app-bar>
 
-		<v-main>
+		<v-main class="main-container">
 			<VoiceApp />
 		</v-main>
 	</v-app>
 </template>
+
+<style>
+/* Eliminar scroll del contenedor principal */
+.main-container {
+	height: calc(100vh - 64px) !important;
+	overflow: hidden !important;
+}
+
+.v-main {
+	padding: 0 !important;
+}
+</style>
