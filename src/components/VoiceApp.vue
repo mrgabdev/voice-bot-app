@@ -64,8 +64,24 @@
 
 		<!-- Fixed Input Area -->
 		<div class="input-area-fixed">
+			<!-- Tip sobre títulos en inglés -->
 			<v-container fluid class="pa-2">
 				<v-card variant="elevated" class="input-card">
+					<v-alert
+						variant="tonal"
+						type="info"
+						density="compact"
+						icon="mdi-information-outline"
+					>
+						<div class="d-flex align-center">
+							<v-icon class="mr-2" size="16">mdi-translate</v-icon>
+							<span class="text-caption">
+								<strong>💡 Tip:</strong> Para mejores resultados, usa los
+								títulos de películas en inglés (ej: "The Dark Knight" en lugar
+								de "El Caballero Oscuro")
+							</span>
+						</div>
+					</v-alert>
 					<v-card-text class="pa-2">
 						<!-- Modo solo micrófono (por defecto) -->
 						<div
@@ -77,6 +93,7 @@
 								color="secondary"
 								variant="text"
 								@click="showTextInput = true"
+								:disabled="isRecording || isProcessing"
 								size="small"
 								v-tooltip="'Escribir mensaje'"
 							>
@@ -87,7 +104,7 @@
 								icon
 								color="primary"
 								@click="startRecording"
-								:disabled="isRecording"
+								:disabled="isRecording || isProcessing"
 								size="large"
 								class="recording-btn mx-2"
 								:class="{ 'pulse-animation': isRecording }"
@@ -103,7 +120,13 @@
 								class="text-caption text-medium-emphasis"
 								style="font-size: 0.75rem"
 							>
-								{{ isRecording ? 'Grabando...' : 'Toca para hablar' }}
+								{{
+									isProcessing
+										? 'Procesando...'
+										: isRecording
+										? 'Grabando...'
+										: 'Toca para hablar'
+								}}
 							</div>
 						</div>
 
@@ -117,7 +140,7 @@
 								hide-details
 								class="compact-input"
 								@keyup.enter="sendTextMessage"
-								:disabled="isRecording"
+								:disabled="isRecording || isProcessing"
 								autofocus
 								auto-grow
 								rows="1"
@@ -129,7 +152,7 @@
 								icon
 								color="success"
 								@click="sendTextMessage"
-								:disabled="!messageText.trim() || isRecording"
+								:disabled="!messageText.trim() || isRecording || isProcessing"
 								size="default"
 								v-tooltip="'Enviar mensaje'"
 								class="ml-2"
@@ -143,7 +166,7 @@
 								icon
 								color="primary"
 								@click="startRecording"
-								:disabled="isRecording"
+								:disabled="isRecording || isProcessing"
 								size="default"
 								class="recording-btn"
 								:class="{ 'pulse-animation': isRecording }"
@@ -160,6 +183,7 @@
 								color="secondary"
 								variant="text"
 								@click=";(showTextInput = false), (messageText = '')"
+								:disabled="isProcessing"
 								size="small"
 								v-tooltip="'Ocultar teclado'"
 							>
@@ -175,13 +199,14 @@
 
 <script setup>
 import { onMounted, onUnmounted } from 'vue'
-import { useVoiceChat } from '../composables/useVoiceChat.js'
+import { useVoiceChatSimple } from '../composables/useVoiceChat.js'
 
-// Usar el composable
+// Usar el composable simplificado
 const {
 	// Referencias reactivas
 	chatContainer,
 	isRecording,
+	isProcessing,
 	messages,
 	audioLevel,
 	messageText,
@@ -201,12 +226,7 @@ const {
 	toggleTextInput,
 	hideTextInput,
 	cleanup
-} = useVoiceChat()
-
-// Lifecycle hooks
-onMounted(() => {
-	// El composable maneja toda la inicialización
-})
+} = useVoiceChatSimple()
 
 onUnmounted(() => {
 	cleanup()
@@ -216,70 +236,33 @@ onUnmounted(() => {
 <style scoped>
 /* Layout principal */
 .voice-app-layout {
-	height: calc(100vh - 64px); /* Restamos la altura del v-app-bar */
+	height: calc(100vh - 64px);
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
 }
 
-/* Header del chat (no fijo) */
 .chat-header {
 	flex-shrink: 0;
 	background: rgb(var(--v-theme-surface));
 	border-bottom: 1px solid rgba(var(--v-border-color), 0.12);
 }
 
-/* Área de mensajes con scroll */
 .chat-messages-area {
 	flex: 1;
 	overflow-y: auto;
 	overflow-x: hidden;
-	padding-bottom: 80px; /* Reducido: Espacio para el input fijo más compacto */
+	padding-bottom: 80px;
 	background: rgb(var(--v-theme-background));
 }
 
-/* Input área fijo en la parte inferior - más compacto */
 .input-area-fixed {
 	position: fixed;
 	bottom: 0;
 	left: 0;
 	right: 0;
 	z-index: 100;
-	background: rgba(var(--v-theme-surface), 0.96);
-	backdrop-filter: blur(12px);
-	-webkit-backdrop-filter: blur(12px);
-	border-top: 1px solid rgba(var(--v-border-color), 0.12);
-	box-shadow: 0 -1px 12px rgba(0, 0, 0, 0.08);
-	min-height: 60px; /* Altura mínima compacta */
-}
-
-/* Tarjeta del input - más compacta */
-.input-card {
-	border-radius: 12px !important;
-	box-shadow: none !important;
-	background: transparent !important;
-	min-height: unset !important;
-}
-
-/* Input de texto compacto */
-.compact-input :deep(.v-field) {
-	min-height: 36px !important;
-	font-size: 14px !important;
-}
-
-.compact-input :deep(.v-field__input) {
-	min-height: 36px !important;
-	padding: 8px 12px !important;
-	font-size: 14px !important;
-}
-
-.compact-input :deep(.v-field__outline) {
-	--v-field-border-width: 1px !important;
-}
-
-.compact-input :deep(.v-field__prepend-inner) {
-	padding-top: 8px !important;
-	padding-bottom: 8px !important;
+	min-height: 60px;
 }
 
 /* Lista de mensajes */
@@ -319,11 +302,9 @@ onUnmounted(() => {
 	margin-right: 0 !important;
 }
 
-/* Botón de grabación con pulso reactivo */
 .recording-btn {
 	transition: all 0.2s ease-in-out;
 	position: relative;
-	overflow: hidden;
 }
 
 .recording-btn.pulse-animation {
@@ -353,6 +334,7 @@ onUnmounted(() => {
 	border-radius: 50%;
 	transform: translate(-50%, -50%) scale(0);
 	animation: backgroundPulse 1s ease-in-out infinite;
+	z-index: -1;
 }
 
 @keyframes backgroundPulse {
@@ -371,7 +353,6 @@ onUnmounted(() => {
 	font-weight: bold;
 }
 
-/* Scroll personalizado para el área de mensajes */
 .chat-messages-area::-webkit-scrollbar {
 	width: 4px;
 }

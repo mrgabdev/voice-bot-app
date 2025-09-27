@@ -1,6 +1,6 @@
 import { ref, computed, nextTick } from 'vue'
 
-export function useVoiceChat() {
+export function useVoiceChatSimple() {
 	// --- CONFIGURACIÓN DE DETECCIÓN DE SILENCIO ---
 	const THRESHOLD = 1.5 // Umbral por encima del ruido ambiente (1.0 cuando callado)
 	const SILENCE_TIMEOUT_MS = 2500 // 2.5 segundos de silencio para terminar
@@ -11,6 +11,7 @@ export function useVoiceChat() {
 
 	// --- ESTADO REACTIVO ---
 	const isRecording = ref(false)
+	const isProcessing = ref(false) // Para deshabilitar botones durante fetch
 	const messages = ref([]) // Arreglo de mensajes del chat
 	const audioLevel = ref(0) // Para mostrar nivel de audio en tiempo real
 	const messageText = ref('') // Para el campo de texto
@@ -26,7 +27,6 @@ export function useVoiceChat() {
 	let detectSilenceLoopId = null
 	let recordingStartTime = 0
 	let lastSoundTime = 0
-	let synth = null
 
 	// --- COMPUTED ---
 	const pulseStyle = computed(() => {
@@ -40,7 +40,8 @@ export function useVoiceChat() {
 
 		return {
 			'--pulse-intensity': pulseIntensity,
-			'--scale-multiplier': scaleMultiplier
+			'--pulse-scale': scaleMultiplier,
+			transform: `scale(${scaleMultiplier})`
 		}
 	})
 
@@ -77,123 +78,76 @@ export function useVoiceChat() {
 		})
 	}
 
-	// Función para convertir errores técnicos en mensajes amigables
-	function getOrganicErrorMessage(error, context = 'general') {
-		const errorText = error.message || error.toString()
-
-		// Errores de red/conexión
-		if (
-			errorText.includes('Failed to fetch') ||
-			errorText.includes('NetworkError')
-		) {
-			return '🔌 No puedo conectarme al servidor ahora mismo. ¿Podrías intentar de nuevo?'
-		}
-
-		// Errores 404
-		if (errorText.includes('404') || errorText.includes('Not Found')) {
-			return '🤔 Parece que el servicio no está disponible. ¿El servidor está funcionando?'
-		}
-
-		// Errores 500
-		if (
-			errorText.includes('500') ||
-			errorText.includes('Internal Server Error')
-		) {
-			return '😅 Ups, algo salió mal en mi sistema. Inténtalo de nuevo en un momento.'
-		}
-
-		// Timeout
-		if (errorText.includes('timeout') || errorText.includes('AbortError')) {
-			return '⏱️ Estoy tardando más de lo normal. ¿Podrías intentar con un mensaje más corto?'
-		}
-
-		// Errores de permisos
-		if (errorText.includes('NotAllowedError')) {
-			return '🎤 Necesito permiso para usar tu micrófono. ¿Podrías habilitarlo en tu navegador?'
-		}
-
-		// Error de micrófono no encontrado
-		if (errorText.includes('NotFoundError')) {
-			return '🎙️ No puedo encontrar tu micrófono. ¿Está conectado correctamente?'
-		}
-
-		// Errores de audio específicos
-		if (context === 'audio' && errorText.includes('Error')) {
-			return '🎵 Hubo un problema procesando tu audio. ¿Podrías intentar hablar más claro?'
-		}
-
-		// Error genérico más amigable
-		return '😊 Algo no salió como esperaba. ¿Podrías intentar de nuevo?'
-	}
-
 	function stripMarkdown(text) {
 		return text
 			.replace(/\*\*(.*?)\*\*/gs, '$1')
 			.replace(/\*(.*?)\*/gs, '$1')
-			.replace(/`(.*?)`/gs, '$1')
+			.replace(/_(.*?)_/gs, '$1')
 			.replace(/~~(.*?)~~/gs, '$1')
-			.replace(/#{1,6}\s*(.*)/g, '$1')
-			.replace(/^\s*[-+*]\s+/gm, '• ')
-			.replace(/^\s*\d+\.\s+/gm, '• ')
-			.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-			.trim()
+			.replace(/:(?!\s)/g, ': ')
+			.replace(/\n/g, ' ')
 	}
 
 	// --- FUNCIONES DE AUDIO/TTS ---
 
 	const speak = (text) => {
-		stopSpeech()
-		if ('speechSynthesis' in window) {
-			const utterance = new SpeechSynthesisUtterance(stripMarkdown(text))
-			utterance.lang = 'es-ES'
-			utterance.rate = 1.0
-			utterance.pitch = 1.0
-			utterance.volume = 1.0
-			synth = window.speechSynthesis
-			synth.speak(utterance)
+		if (speechSynthesis.speaking) {
+			speechSynthesis.cancel()
 		}
+		const utterance = new SpeechSynthesisUtterance(text)
+		utterance.lang = 'es-ES'
+		utterance.volume = 1
+		utterance.rate = 1
+		utterance.pitch = 1
+		speechSynthesis.speak(utterance)
 	}
 
 	const stopSpeech = () => {
-		if (synth && 'speechSynthesis' in window) {
-			window.speechSynthesis.cancel()
+		if (speechSynthesis.speaking) {
+			speechSynthesis.cancel()
 		}
 	}
 
 	// --- FUNCIONES DE DETECCIÓN DE SILENCIO ---
 
 	const detectSilence = () => {
-		if (!analyser) return
+		if (!isRecording.value) return
 
-		// 1. Obtener datos de audio
-		const dataArray = new Uint8Array(analyser.frequencyBinCount)
-		analyser.getByteFrequencyData(dataArray)
+		// 1. Obtener los datos de amplitud (tiempo-dominio)
+		const bufferLength = analyser.frequencyBinCount
+		const dataArray = new Uint8Array(bufferLength)
+		analyser.getByteTimeDomainData(dataArray)
 
-		// 2. Calcular el nivel promedio
-		const sum = dataArray.reduce((acc, val) => acc + val, 0)
-		const average = sum / dataArray.length
-		audioLevel.value = average / 10 // Normalizar para mostrar
-
-		// 3. Verificar si hay sonido (por encima del umbral)
-		if (average > THRESHOLD) {
-			lastSoundTime = Date.now() // Actualizar tiempo del último sonido detectado
+		// 2. Calcular el nivel máximo de amplitud
+		let maxAmplitude = 0
+		for (let i = 0; i < bufferLength; i++) {
+			const amplitude = Math.abs(dataArray[i] - 128)
+			if (amplitude > maxAmplitude) {
+				maxAmplitude = amplitude
+			}
 		}
 
-		// 4. Verificar período de gracia inicial (no detectar silencio al inicio)
+		// 3. Actualizar nivel visual y verificar si hay sonido
+		audioLevel.value = Math.round(maxAmplitude * 1000) / 1000
+
+		if (maxAmplitude > THRESHOLD) {
+			lastSoundTime = Date.now()
+		}
+
+		// 4. Verificar período de gracia inicial
 		const timeSinceStart = Date.now() - recordingStartTime
 		if (timeSinceStart < INITIAL_GRACE_PERIOD) {
-			// Durante el período de gracia, resetear lastSoundTime constantemente
-			lastSoundTime = Date.now() // Mantener actualizado durante la gracia
+			lastSoundTime = Date.now()
 			detectSilenceLoopId = requestAnimationFrame(detectSilence)
 			return
 		}
 
-		// 5. Verificar si se ha superado el tiempo de silencio (después del período de gracia)
+		// 5. Verificar si se ha superado el tiempo de silencio
 		const silenceDuration = Date.now() - lastSoundTime
 
 		if (silenceDuration > SILENCE_TIMEOUT_MS) {
 			finalizeRecording(true) // Parada automática
-			return // Terminar el bucle
+			return
 		}
 
 		// 6. Continuar la verificación en el siguiente frame
@@ -201,6 +155,30 @@ export function useVoiceChat() {
 	}
 
 	// --- FUNCIONES DE GRABACIÓN ---
+
+	const finalizeRecording = async (isAutoStop = false) => {
+		// Solo proceder si realmente está grabando
+		if (!mediaRecorder || mediaRecorder.state === 'inactive') return
+
+		// 1. Detener el detector de silencio
+		if (detectSilenceLoopId) {
+			cancelAnimationFrame(detectSilenceLoopId)
+			detectSilenceLoopId = null
+		}
+
+		// 2. Establecer el estado antes de llamar a mediaRecorder.stop()
+		isRecording.value = false
+		audioLevel.value = 0
+
+		// 3. Detener MediaRecorder (esto dispara el evento onstop)
+		if (mediaRecorder.state === 'recording') {
+			mediaRecorder.stop()
+		}
+
+		// 4. Detener el uso del micrófono y cerrar el AudioContext
+		if (stream) stream.getTracks().forEach((track) => track.stop())
+		if (audioContext) await audioContext.close()
+	}
 
 	const startRecording = async () => {
 		stopSpeech()
@@ -216,35 +194,27 @@ export function useVoiceChat() {
 			mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data)
 			mediaRecorder.onstart = () => {
 				isRecording.value = true
-				recordingStartTime = Date.now() // Tiempo de inicio para período de gracia
-				lastSoundTime = Date.now() // Reiniciar tiempo al comenzar
+				recordingStartTime = Date.now()
+				lastSoundTime = Date.now()
+
+				// 3. Iniciar AudioContext y Analizador DENTRO del onstart
+				audioContext = new (window.AudioContext || window.webkitAudioContext)()
+				const source = audioContext.createMediaStreamSource(stream)
+				analyser = audioContext.createAnalyser()
+
+				source.connect(analyser)
+				analyser.fftSize = 2048
+
+				// 4. Iniciar la detección de silencio
+				detectSilenceLoopId = requestAnimationFrame(detectSilence)
 			}
 
-			// 3. Iniciar AudioContext y Analizador
-			audioContext = new (window.AudioContext || window.webkitAudioContext)()
-			const source = audioContext.createMediaStreamSource(stream)
-			analyser = audioContext.createAnalyser()
-
-			source.connect(analyser)
-			analyser.fftSize = 2048 // Configurar el analizador
-
-			// 4. Iniciar la detección de silencio
-			detectSilenceLoopId = requestAnimationFrame(detectSilence)
-
 			mediaRecorder.onstop = async () => {
-				// Este bloque se ejecuta después de que `finalizeRecording` llama a `mediaRecorder.stop()`
-
 				if (audioChunks.length === 0) return
 
-				// 🎙️ MOSTRAR MENSAJE TEMPORAL DE AUDIO INMEDIATAMENTE
-				const tempUserMessage = {
-					role: 'user',
-					content: '🎤 Procesando audio...',
-					timestamp: new Date().toISOString(),
-					isTemporary: true
-				}
-				messages.value.push(tempUserMessage)
-				scrollToBottom()
+				// Agregar mensaje temporal del usuario y activar estado de procesamiento
+				addMessage('user', '🎤 Procesando audio...')
+				isProcessing.value = true
 
 				const audioBlob = new Blob(audioChunks, { type: 'audio/webm' })
 				const formData = new FormData()
@@ -252,9 +222,8 @@ export function useVoiceChat() {
 				formData.append('sessionId', sessionId.value)
 
 				try {
-					// Enviar al backend con timeout
 					const controller = new AbortController()
-					const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 segundos timeout
+					const timeoutId = setTimeout(() => controller.abort(), 30000)
 
 					const res = await fetch(`${import.meta.env.VITE_API_URL}/movie`, {
 						method: 'POST',
@@ -265,97 +234,123 @@ export function useVoiceChat() {
 					clearTimeout(timeoutId)
 
 					if (!res.ok) {
-						const serverError = new Error(`${res.status} ${res.statusText}`)
-						throw new Error(getOrganicErrorMessage(serverError, 'audio'))
+						throw new Error(
+							`Error del servidor: ${res.status} ${res.statusText}`
+						)
 					}
 
 					const data = await res.json()
+					console.log('Respuesta recibida:', data)
 
-					// 🔄 ACTUALIZAR MENSAJE DE AUDIO CON TRANSCRIPCIÓN Y RESPUESTA
-					// Encontrar el último mensaje temporal de audio y reemplazarlo con la transcripción
-					const lastTempIndex = messages.value.findIndex(
-						(msg) => msg.isTemporary && msg.role === 'user'
-					)
-					if (lastTempIndex !== -1) {
-						// Extraer la transcripción del historial del servidor si está disponible
-						if (
-							data.history &&
-							Array.isArray(data.history) &&
-							data.history.length >= 2
-						) {
-							const userMessage = data.history[data.history.length - 2] // Penúltimo mensaje (usuario)
-							const botMessage = data.history[data.history.length - 1] // Último mensaje (bot)
+					// Extraer la transcripción y respuesta del historial si está disponible
+					if (
+						data.history &&
+						Array.isArray(data.history) &&
+						data.history.length >= 2
+					) {
+						const userMessage = data.history[data.history.length - 2] // Penúltimo mensaje (usuario)
+						const botMessage = data.history[data.history.length - 1] // Último mensaje (bot)
 
-							// Reemplazar mensaje temporal con transcripción real
-							messages.value[lastTempIndex] = {
+						// Actualizar el último mensaje temporal con la transcripción real
+						if (messages.value.length > 0) {
+							messages.value[messages.value.length - 1] = {
 								role: 'user',
 								content: userMessage.content,
 								timestamp: userMessage.timestamp
 							}
-
-							// Agregar respuesta del bot
-							addMessage('model', botMessage.content)
-						} else {
-							// Fallback - usar la respuesta directa
-							messages.value.splice(lastTempIndex, 1) // Quitar temporal
-							const botResponse =
-								stripMarkdown(data.response) ||
-								'Error al obtener transcripción.'
-							addMessage('model', botResponse)
 						}
+
+						// Agregar respuesta del bot
+						addMessage('model', botMessage.content)
+						speak(botMessage.content)
+					} else {
+						// Fallback - usar la respuesta directa
+						const botResponse =
+							stripMarkdown(data.response) || 'Error al obtener transcripción.'
+
+						// Quitar mensaje temporal y agregar transcripción + respuesta
+						if (messages.value.length > 0) {
+							messages.value[messages.value.length - 1] = {
+								role: 'user',
+								content: 'Audio procesado',
+								timestamp: new Date().toISOString()
+							}
+						}
+						addMessage('model', botResponse)
+						speak(botResponse)
 					}
 
-					const botResponse =
-						stripMarkdown(data.response) || 'Error al obtener transcripción.'
-					speak(botResponse)
+					// Desactivar estado de procesamiento al completar exitosamente
+					isProcessing.value = false
 				} catch (fetchError) {
 					console.error('Error enviando audio:', fetchError)
 
-					// Remover mensaje temporal de audio
-					messages.value = messages.value.filter((msg) => !msg.isTemporary)
-					const organicError = getOrganicErrorMessage(fetchError, 'audio')
-					addMessage('model', organicError)
-					speak(organicError)
+					let errorMsg
+					if (fetchError.name === 'AbortError') {
+						errorMsg = 'Timeout: El servidor tardó demasiado en responder.'
+					} else if (fetchError.message.includes('Failed to fetch')) {
+						errorMsg = 'Error de conexión: ¿Está el servidor funcionando?'
+					} else {
+						errorMsg = `Error: ${fetchError.message}`
+					}
+
+					// Quitar mensaje temporal y agregar error
+					if (messages.value.length > 0) {
+						messages.value.pop() // Quitar el mensaje temporal
+					}
+					addMessage('model', errorMsg)
+					speak(errorMsg)
+
+					// Desactivar estado de procesamiento en caso de error
+					isProcessing.value = false
 				}
+
+				// Limpiar variables después de la finalización
+				mediaRecorder = null
+				stream = null
+				audioContext = null
+				analyser = null
 			}
 
-			// 5. Iniciar grabación
+			// Iniciar la grabación
 			mediaRecorder.start()
 		} catch (error) {
-			console.error('Error al iniciar grabación:', error)
-			const organicError = getOrganicErrorMessage(error, 'audio')
-			addMessage('model', organicError)
+			console.error('Error al iniciar la grabación:', error)
+			isRecording.value = false
+
+			// Limpiar recursos si hay error
+			if (stream) {
+				stream.getTracks().forEach((track) => track.stop())
+				stream = null
+			}
+			if (audioContext) {
+				await audioContext.close()
+				audioContext = null
+			}
+
+			// Mensajes específicos según el tipo de error
+			let errorMsg
+			if (error.name === 'NotAllowedError') {
+				errorMsg =
+					'Error: Permiso de micrófono denegado. Por favor, permite el acceso.'
+			} else if (error.name === 'NotFoundError') {
+				errorMsg = 'Error: No se encontró micrófono. Verifica tu dispositivo.'
+			} else {
+				errorMsg = `Error iniciando grabación: ${error.message}`
+			}
+
+			// Reemplazar último mensaje con error
+			if (messages.value.length > 0) {
+				messages.value[messages.value.length - 1] = {
+					role: 'model',
+					content: errorMsg,
+					timestamp: new Date().toISOString()
+				}
+				scrollToBottom()
+			}
+
 			speak(errorMsg)
 		}
-	}
-
-	const finalizeRecording = (automatic = false) => {
-		// Limpiar el bucle de detección de silencio
-		if (detectSilenceLoopId) {
-			cancelAnimationFrame(detectSilenceLoopId)
-			detectSilenceLoopId = null
-		}
-
-		// Detener y cerrar AudioContext
-		if (audioContext && audioContext.state !== 'closed') {
-			audioContext.close()
-			audioContext = null
-		}
-
-		// Detener MediaRecorder si está grabando
-		if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-			mediaRecorder.stop()
-		}
-
-		// Detener el stream de audio
-		if (stream) {
-			stream.getTracks().forEach((track) => track.stop())
-			stream = null
-		}
-
-		// Resetear estado
-		isRecording.value = false
-		audioLevel.value = 0
 	}
 
 	const stopRecording = () => {
@@ -372,21 +367,14 @@ export function useVoiceChat() {
 		const message = messageText.value.trim()
 		messageText.value = ''
 
-		// 🚀 MOSTRAR MENSAJE DEL USUARIO INMEDIATAMENTE
+		// Mostrar mensaje del usuario
 		addMessage('user', message)
 
 		try {
-			// Agregar mensaje temporal "escribiendo..."
-			const tempBotMessage = {
-				role: 'model',
-				content: '🤖 Procesando tu mensaje...',
-				timestamp: new Date().toISOString(),
-				isTemporary: true
-			}
-			messages.value.push(tempBotMessage)
-			scrollToBottom()
+			// Agregar mensaje "procesando..." y activar estado de procesamiento
+			addMessage('model', '🤖 Procesando tu mensaje...')
+			isProcessing.value = true
 
-			// Enviar al backend como texto
 			const response = await fetch(
 				`${import.meta.env.VITE_API_URL}/movie/text`,
 				{
@@ -402,30 +390,46 @@ export function useVoiceChat() {
 			)
 
 			if (!response.ok) {
-				const serverError = new Error(
-					`${response.status} ${response.statusText}`
+				throw new Error(
+					`Error del servidor: ${response.status} ${response.statusText}`
 				)
-				throw new Error(getOrganicErrorMessage(serverError, 'text'))
 			}
 
 			const data = await response.json()
 
-			// 🔄 REMOVER MENSAJE TEMPORAL Y AGREGAR RESPUESTA REAL
-			// Quitar el mensaje temporal "escribiendo..."
-			messages.value = messages.value.filter((msg) => !msg.isTemporary)
-
-			// Agregar solo la respuesta del bot (el mensaje del usuario ya está)
+			// Reemplazar mensaje temporal con la respuesta
 			const botResponse =
 				stripMarkdown(data.response) || 'Error al obtener respuesta.'
-			addMessage('model', botResponse)
+			if (messages.value.length > 0) {
+				messages.value[messages.value.length - 1] = {
+					role: 'model',
+					content: botResponse,
+					timestamp: new Date().toISOString()
+				}
+				scrollToBottom()
+			}
+
 			speak(botResponse)
+
+			// Desactivar estado de procesamiento al completar exitosamente
+			isProcessing.value = false
 		} catch (error) {
 			console.error('Error enviando mensaje:', error)
-			// Remover mensaje temporal en caso de error
-			messages.value = messages.value.filter((msg) => !msg.isTemporary)
-			const organicError = getOrganicErrorMessage(error, 'text')
-			addMessage('model', organicError)
-			speak(organicError)
+
+			// Reemplazar mensaje temporal con error
+			if (messages.value.length > 0) {
+				messages.value[messages.value.length - 1] = {
+					role: 'model',
+					content: `Error: ${error.message}`,
+					timestamp: new Date().toISOString()
+				}
+				scrollToBottom()
+			}
+
+			speak(`Error: ${error.message}`)
+
+			// Desactivar estado de procesamiento en caso de error
+			isProcessing.value = false
 		}
 	}
 
@@ -455,6 +459,7 @@ export function useVoiceChat() {
 		// Referencias reactivas
 		chatContainer,
 		isRecording,
+		isProcessing,
 		messages,
 		audioLevel,
 		messageText,
