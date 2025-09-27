@@ -1,0 +1,10 @@
+version: '3.9'
+
+services:
+  voice-bot-frontend:
+    build:
+      context: .
+      args:
+        VITE_API_URL: http://localhost:3000/api
+    ports:
+      - '4173:4173'

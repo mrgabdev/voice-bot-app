@@ -77,6 +77,55 @@ export function useVoiceChat() {
 		})
 	}
 
+	// Función para convertir errores técnicos en mensajes amigables
+	function getOrganicErrorMessage(error, context = 'general') {
+		const errorText = error.message || error.toString()
+
+		// Errores de red/conexión
+		if (
+			errorText.includes('Failed to fetch') ||
+			errorText.includes('NetworkError')
+		) {
+			return '🔌 No puedo conectarme al servidor ahora mismo. ¿Podrías intentar de nuevo?'
+		}
+
+		// Errores 404
+		if (errorText.includes('404') || errorText.includes('Not Found')) {
+			return '🤔 Parece que el servicio no está disponible. ¿El servidor está funcionando?'
+		}
+
+		// Errores 500
+		if (
+			errorText.includes('500') ||
+			errorText.includes('Internal Server Error')
+		) {
+			return '😅 Ups, algo salió mal en mi sistema. Inténtalo de nuevo en un momento.'
+		}
+
+		// Timeout
+		if (errorText.includes('timeout') || errorText.includes('AbortError')) {
+			return '⏱️ Estoy tardando más de lo normal. ¿Podrías intentar con un mensaje más corto?'
+		}
+
+		// Errores de permisos
+		if (errorText.includes('NotAllowedError')) {
+			return '🎤 Necesito permiso para usar tu micrófono. ¿Podrías habilitarlo en tu navegador?'
+		}
+
+		// Error de micrófono no encontrado
+		if (errorText.includes('NotFoundError')) {
+			return '🎙️ No puedo encontrar tu micrófono. ¿Está conectado correctamente?'
+		}
+
+		// Errores de audio específicos
+		if (context === 'audio' && errorText.includes('Error')) {
+			return '🎵 Hubo un problema procesando tu audio. ¿Podrías intentar hablar más claro?'
+		}
+
+		// Error genérico más amigable
+		return '😊 Algo no salió como esperaba. ¿Podrías intentar de nuevo?'
+	}
+
 	function stripMarkdown(text) {
 		return text
 			.replace(/\*\*(.*?)\*\*/gs, '$1')
@@ -216,9 +265,8 @@ export function useVoiceChat() {
 					clearTimeout(timeoutId)
 
 					if (!res.ok) {
-						throw new Error(
-							`Error del servidor: ${res.status} ${res.statusText}`
-						)
+						const serverError = new Error(`${res.status} ${res.statusText}`)
+						throw new Error(getOrganicErrorMessage(serverError, 'audio'))
 					}
 
 					const data = await res.json()
@@ -263,19 +311,11 @@ export function useVoiceChat() {
 				} catch (fetchError) {
 					console.error('Error enviando audio:', fetchError)
 
-					let errorMsg
-					if (fetchError.name === 'AbortError') {
-						errorMsg = 'Timeout: El servidor tardó demasiado en responder.'
-					} else if (fetchError.message.includes('Failed to fetch')) {
-						errorMsg = 'Error de conexión: ¿Está el servidor funcionando?'
-					} else {
-						errorMsg = `Error: ${fetchError.message}`
-					}
-
 					// Remover mensaje temporal de audio
 					messages.value = messages.value.filter((msg) => !msg.isTemporary)
-					addMessage('model', errorMsg)
-					speak(errorMsg)
+					const organicError = getOrganicErrorMessage(fetchError, 'audio')
+					addMessage('model', organicError)
+					speak(organicError)
 				}
 			}
 
@@ -283,15 +323,8 @@ export function useVoiceChat() {
 			mediaRecorder.start()
 		} catch (error) {
 			console.error('Error al iniciar grabación:', error)
-			let errorMsg = 'Error al acceder al micrófono'
-
-			if (error.name === 'NotAllowedError') {
-				errorMsg = 'Permisos de micrófono denegados'
-			} else if (error.name === 'NotFoundError') {
-				errorMsg = 'No se encontró micrófono'
-			}
-
-			addMessage('model', errorMsg)
+			const organicError = getOrganicErrorMessage(error, 'audio')
+			addMessage('model', organicError)
 			speak(errorMsg)
 		}
 	}
@@ -369,9 +402,10 @@ export function useVoiceChat() {
 			)
 
 			if (!response.ok) {
-				throw new Error(
-					`Error del servidor: ${response.status} ${response.statusText}`
+				const serverError = new Error(
+					`${response.status} ${response.statusText}`
 				)
+				throw new Error(getOrganicErrorMessage(serverError, 'text'))
 			}
 
 			const data = await response.json()
@@ -389,9 +423,9 @@ export function useVoiceChat() {
 			console.error('Error enviando mensaje:', error)
 			// Remover mensaje temporal en caso de error
 			messages.value = messages.value.filter((msg) => !msg.isTemporary)
-			const errorMsg = `Error: ${error.message}`
-			addMessage('model', errorMsg)
-			speak(errorMsg)
+			const organicError = getOrganicErrorMessage(error, 'text')
+			addMessage('model', organicError)
+			speak(organicError)
 		}
 	}
 
