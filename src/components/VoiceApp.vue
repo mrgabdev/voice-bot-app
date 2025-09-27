@@ -139,7 +139,6 @@
 								density="compact"
 								hide-details
 								class="compact-input"
-								@keyup.enter="sendTextMessage"
 								:disabled="isRecording || isProcessing"
 								autofocus
 								auto-grow
@@ -269,6 +268,7 @@ onUnmounted(() => {
 .messages-list {
 	max-width: 1000px;
 	margin: 0 auto;
+	margin-bottom: 2rem;
 }
 
 /* Estado vacío */

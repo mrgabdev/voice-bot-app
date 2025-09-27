@@ -94,12 +94,40 @@ src/
 4. **La grabación se detiene automáticamente** cuando dejas de hablar
 5. **Espera la respuesta** del bot con información y recomendaciones
 
-### Comandos de Voz Sugeridos:
+### Comandos sugeridos - Puede ser en ingles o español:
 
-- "What movies do you recommend for tonight?"
-- "Tell me about Interstellar"
-- "I want to watch a comedy movie"
-- "What's the rating of The Matrix?"
+**Búsquedas de películas específicas:**
+
+- "Tell me about Inception"
+- "Search for The Dark Knight"
+- "What do you know about Interstellar?"
+- "Find information about Avatar"
+
+**Búsquedas basadas en contexto y conversación previa:**
+
+- "Compare the last two movies we discussed"
+- "Save the last movie you mentioned to my list"
+
+**Búsquedas con filtros OMDB:**
+
+- "Search for Batman movies from 2008"
+- "Find movies called Spiderman from 2002"
+- "Search for series called Breaking Bad"
+- "Look for the movie Joker from 2019"
+
+**Gestión de favoritos:**
+
+- "Save Inception to my list"
+- "Add The Dark Knight to my list"
+- "Show me my saved movies"
+- "What movies do I have in my list?"
+
+**Información detallada:**
+
+- "Give me the plot of The Matrix"
+- "Who directed Pulp Fiction?"
+- "What's the rating of Forrest Gump?"
+- "When was Titanic released?"
 
 ## 🔧 Desarrollo
 
@@ -118,15 +146,3 @@ npm run preview
 # Linting
 npm run lint
 ```
-
-## 🤝 Contribuir
-
-1. Fork el proyecto
-2. Crea tu rama de feature (`git checkout -b feature/AmazingFeature`)
-3. Commit tus cambios (`git commit -m 'Add some AmazingFeature'`)
-4. Push a la rama (`git push origin feature/AmazingFeature`)
-5. Abre un Pull Request
-
-## 📄 Licencia
-
-Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para detalles.
